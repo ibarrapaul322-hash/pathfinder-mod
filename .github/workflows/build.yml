@@ -1,7 +1,7 @@
 # ONE-FILE VERSION
 # Put this file in your repo at: .github/workflows/build.yml
 # It writes the mod's files itself and then builds them.
-name: .github/workflows/build.yml
+name: Pathfinder
 
 on:
   workflow_dispatch:
