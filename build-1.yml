@@ -1,7 +1,7 @@
 # ONE-FILE VERSION
 # Put this file in your repo at: .github/workflows/build.yml
 # It writes the mod's files itself and then builds them.
-name: Build Geode Mod
+name: .github/workflows/build.yml
 
 on:
   workflow_dispatch:
