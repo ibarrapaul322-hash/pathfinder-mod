@@ -1,0 +1,41 @@
+{
+  "geode": "5.10.1",
+  "gd": {
+    "android": "*"
+  },
+  "version": "v1.0.1",
+  "id": "user.pathfinder-bot",
+  "name": "Pathfinder Bot",
+  "developer": "pauly",
+  "description": "Inspired by: FB Mod\nPFP by: NroGD",
+  "settings": {
+    "segment-steps": {
+      "type": "int",
+      "name": "Search segment length (steps)",
+      "description": "The most physics steps the bot plans per segment. Smaller is faster but more likely to get stuck.",
+      "default": 16,
+      "min": 6,
+      "max": 32
+    },
+    "search-speed": {
+      "type": "float",
+      "name": "Max search speed",
+      "description": "Highest game speed while searching. The bot slows itself down when needed so it never misses a chance to press. Higher can lag or crash on weak phones.",
+      "default": 5.0,
+      "min": 1.0,
+      "max": 20.0
+    },
+    "show-window-tally": {
+      "type": "bool",
+      "name": "Show frame window tally",
+      "description": "Show a tally of input gaps (1, 2, 3, 4, 5-6, 7-8, 9-12 steps) during playback.",
+      "default": true
+    },
+    "window-ding": {
+      "type": "bool",
+      "name": "Ding on every counted window",
+      "description": "Play a ding for every counted window, with a different pitch for each window size.",
+      "default": true
+    }
+  }
+}
