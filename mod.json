@@ -3,11 +3,11 @@
   "gd": {
     "android": "*"
   },
-  "version": "v1.0.1",
+  "version": "v1.0.2",
   "id": "user.pathfinder-bot",
   "name": "Pathfinder Bot",
   "developer": "pauly",
-  "description": "Inspired by: FB Mod\nPFP by: NroGD",
+  "description": "Inspired by: FB Mod | PFP by: NroGD",
   "settings": {
     "segment-steps": {
       "type": "int",
@@ -35,6 +35,12 @@
       "type": "bool",
       "name": "Ding on every counted window",
       "description": "Play a ding for every counted window, with a different pitch for each window size.",
+      "default": true
+    },
+    "safe-mode": {
+      "type": "bool",
+      "name": "Auto safe mode",
+      "description": "Blocks the level from being completed while the bot searches or plays. The level restarts instead.",
       "default": true
     }
   }
