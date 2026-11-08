@@ -13,7 +13,7 @@
 //    the checkpoint is restored and the next pattern is tried. If every pattern
 //    fails, the bot backs up one segment and tries something else there.
 //  - When the level is completed the inputs are saved to path.txt.
-
+//    sneaky lil fart ahahahhahaha
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
