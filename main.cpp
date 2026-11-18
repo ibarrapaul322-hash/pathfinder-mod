@@ -1,19 +1,4 @@
-// Pathfinder Bot - a Geode mod that searches for inputs automatically,
-// saves them, and plays them back with an optional frame window tally + dings.
-//
-// How the search works:
-//  - Inputs are applied once per physics step (GJBaseGameLayer::processCommands).
-//  - The run is cut into short segments. One segment is one game frame, and the
-//    bot keeps the number of physics steps per frame at or under the segment
-//    length setting, so it can press or release on ANY step of a segment.
-//  - At the start of each segment a checkpoint is saved.
-//  - The bot tries input patterns for that segment (no change, one toggle,
-//    two toggles), fewest toggles first. If the player survives the segment,
-//    the inputs are kept and a new segment starts. If the player would die,
-//    the checkpoint is restored and the next pattern is tried. If every pattern
-//    fails, the bot backs up one segment and tries something else there.
-//  - When the level is completed the inputs are saved to path.txt.
-
+// Pathfinder mod MAIN.CPP (Recent changes: Fix errors of making paths on levels)
 #include <Geode/Geode.hpp>
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
@@ -46,7 +31,6 @@ struct Segment {
     size_t committedSize = 0;
 };
 
-// how many segments the bot can back up through
 constexpr size_t kMaxDepth = 150;
 
 inline Mode mode = Mode::Off;
@@ -56,13 +40,11 @@ inline bool failed = false;
 inline int segLen = 16;
 inline int attempts = 0;
 
-// search speed control + bookkeeping
 inline int frameStartStep = 0;
 inline int bestStep = 0;
 inline int overruns = 0;
 inline float curScale = 1.f;
 inline int lastN = 0;
-// set when safe mode blocks a level completion; cleared when the level resets
 inline bool blockComplete = false;
 
 inline std::vector<Segment> stack;
@@ -73,7 +55,6 @@ inline std::vector<std::vector<int>> patterns;
 inline std::vector<Input> replay;
 inline size_t playIdx = 0;
 inline int lastInputStep = -1;
-// windows: 1, 2, 3, 4, 5-6, 7-8, 9-12
 inline std::array<int, 7> tally{};
 
 inline void setTimeScale(float s) {
@@ -178,8 +159,9 @@ void dingImpl(E* engine, float pitch) {
 }
 
 inline void ding(int bucket) {
-    // a different pitch for each window size
-    static constexpr std::array<float, 7> pitches = {1.7f, 1.5f, 1.35f, 1.2f, 1.05f, 0.9f, 0.8f};
+    static constexpr std::array<float, 7> pitches = {
+        1.7f, 1.5f, 1.35f, 1.2f, 1.05f, 0.9f, 0.8f
+    };
     dingImpl(FMODAudioEngine::sharedEngine(), pitches[bucket]);
 }
 
@@ -224,18 +206,23 @@ inline void pushCheckpoint(PlayLayer* pl) {
         notify("Search stopped: could not save a checkpoint.", NotificationIcon::Error);
         return;
     }
+
     cp->retain();
+
     Segment s;
     s.cp = cp;
     s.startStep = curStep;
     s.startHeld = held;
     s.patIdx = 0;
     s.committedSize = committed.size();
+
     stack.push_back(s);
+
     if (stack.size() > kMaxDepth) {
         stack.front().cp->release();
         stack.erase(stack.begin());
     }
+
     attempt.clear();
     failed = false;
     frameStartStep = curStep;
@@ -254,24 +241,30 @@ inline void retreat(PlayLayer* pl) {
     failed = false;
     attempt.clear();
     attempts++;
+
     while (!stack.empty()) {
         auto& top = stack.back();
         top.patIdx++;
+
         if (top.patIdx < patterns.size()) {
             restore(pl, top);
             return;
         }
-        // every pattern failed here, so back up one segment
+
         top.cp->release();
         stack.pop_back();
+
         if (!stack.empty()) {
             committed.resize(stack.back().committedSize);
         }
     }
+
     float seconds = static_cast<float>(bestStep) / 240.f;
     int tries = attempts;
     int perFrame = lastN;
+
     stopAll();
+
     notify(
         fmt::format(
             "Search failed: stuck at step {} ({:.1f}s). {} retries, {} steps/frame.",
@@ -281,14 +274,24 @@ inline void retreat(PlayLayer* pl) {
     );
 }
 
-// Keeps the number of physics steps per frame at or just under the segment
-// length, so the bot can press or release on every single step.
 inline void adaptSpeed(int n) {
-    float userSpeed = static_cast<float>(Mod::get()->getSettingValue<double>("search-speed"));
+    float userSpeed = static_cast<float>(
+        Mod::get()->getSettingValue<double>("search-speed")
+    );
+
     float target = static_cast<float>(std::max(4, segLen - 2));
-    float want = n > 0 ? curScale * target / static_cast<float>(n) : curScale * 1.5f;
+    float want = n > 0
+        ? curScale * target / static_cast<float>(n)
+        : curScale * 1.5f;
+
     float k = n > segLen ? 1.f : 0.5f;
-    curScale = std::clamp(curScale + k * (want - curScale), 0.2f, std::max(0.2f, userSpeed));
+
+    curScale = std::clamp(
+        curScale + k * (want - curScale),
+        0.2f,
+        std::max(0.2f, userSpeed)
+    );
+
     setTimeScale(curScale);
 }
 
@@ -297,7 +300,9 @@ inline void searchTick(PlayLayer* pl) {
         pushCheckpoint(pl);
         return;
     }
+
     bestStep = std::max(bestStep, curStep);
+
     if (failed) {
         retreat(pl);
         return;
@@ -306,23 +311,24 @@ inline void searchTick(PlayLayer* pl) {
     int n = curStep - frameStartStep;
     lastN = n;
     adaptSpeed(n);
-    if (n <= 0) {
-        frameStartStep = curStep;
+
+    // Wait until the segment has accumulated enough physics steps.
+    if (n < std::max(1, segLen - 2)) {
         return;
     }
 
     if (n > segLen && overruns < 10) {
-        // the frame ran more steps than the bot can control, so redo it
-        // (same inputs) at a lower speed
         overruns++;
         restore(pl, stack.back());
         return;
     }
+
     overruns = 0;
 
     for (auto const& in : attempt) {
         committed.push_back(in);
     }
+
     pushCheckpoint(pl);
 }
 
@@ -330,8 +336,11 @@ inline void finishSearch() {
     for (auto const& in : attempt) {
         committed.push_back(in);
     }
+
     attempt.clear();
+
     size_t n = committed.size();
+
     if (n == 0) {
         stopAll();
         notify(
@@ -340,33 +349,55 @@ inline void finishSearch() {
         );
         return;
     }
+
     replay = committed;
     bool ok = savePath(replay);
+
     stopAll();
-    notify(fmt::format("Path found! {} inputs{}", n, ok ? " (saved)" : " (could not save file)"), NotificationIcon::Success);
+
+    notify(
+        fmt::format(
+            "Path found! {} inputs{}",
+            n,
+            ok ? " (saved)" : " (could not save file)"
+        ),
+        NotificationIcon::Success
+    );
 }
 
 inline void startSearch() {
     stopAll();
-    segLen = static_cast<int>(Mod::get()->getSettingValue<int64_t>("segment-steps"));
+
+    segLen = static_cast<int>(
+        Mod::get()->getSettingValue<int64_t>("segment-steps")
+    );
+
     buildPatterns(segLen);
-    float userSpeed = static_cast<float>(Mod::get()->getSettingValue<double>("search-speed"));
+
+    float userSpeed = static_cast<float>(
+        Mod::get()->getSettingValue<double>("search-speed")
+    );
+
     curScale = std::min(userSpeed, 3.f);
     frameStartStep = 0;
     bestStep = 0;
     overruns = 0;
     mode = Mode::Search;
+
     setTimeScale(curScale);
 }
 
 inline bool startPlay() {
     if (replay.empty()) replay = loadPath();
     if (replay.empty()) return false;
+
     stopAll();
+
     mode = Mode::Play;
     playIdx = 0;
     lastInputStep = -1;
     tally.fill(0);
+
     return true;
 }
 
@@ -376,14 +407,17 @@ inline void onReset() {
     frameStartStep = 0;
     held = false;
     failed = false;
+
     if (mode == Mode::Play) {
         playIdx = 0;
         lastInputStep = -1;
         tally.fill(0);
     } else if (mode == Mode::Search && !stack.empty()) {
-        // something else restarted the level, so the saved checkpoints are stale
         stopAll();
-        notify("Search stopped because the level was restarted.", NotificationIcon::Warning);
+        notify(
+            "Search stopped because the level was restarted.",
+            NotificationIcon::Warning
+        );
     }
 }
 
@@ -391,32 +425,53 @@ inline void onReset() {
 
 inline void updateLabel(PlayLayer* pl) {
     if (!pl || !pl->m_uiLayer) return;
+
     auto id = "pathfinder-label"_spr;
-    auto label = static_cast<CCLabelBMFont*>(pl->m_uiLayer->getChildByID(id));
+    auto label = static_cast<CCLabelBMFont*>(
+        pl->m_uiLayer->getChildByID(id)
+    );
+
     if (!label) {
         label = CCLabelBMFont::create("", "chatFont.fnt");
         label->setID(id);
         label->setAnchorPoint({0.f, 1.f});
+
         auto win = CCDirector::sharedDirector()->getWinSize();
+
         label->setPosition({10.f, win.height - 10.f});
         label->setScale(0.55f);
         label->setOpacity(210);
+
         pl->m_uiLayer->addChild(label, 1000);
     }
 
     std::string text;
+
     if (mode == Mode::Search) {
         text = fmt::format(
             "Searching...\nstep: {}\ndepth: {}\nretries: {}\ninputs: {}\nspeed: {:.1f}x\nsteps/frame: {}",
-            curStep, stack.size(), attempts, committed.size(), curScale, lastN
+            curStep,
+            stack.size(),
+            attempts,
+            committed.size(),
+            curScale,
+            lastN
         );
-    } else if (mode == Mode::Play && Mod::get()->getSettingValue<bool>("show-window-tally")) {
-        static constexpr std::array<const char*, 7> names = {"1", "2", "3", "4", "5-6", "7-8", "9-12"};
+    } else if (
+        mode == Mode::Play &&
+        Mod::get()->getSettingValue<bool>("show-window-tally")
+    ) {
+        static constexpr std::array<const char*, 7> names = {
+            "1", "2", "3", "4", "5-6", "7-8", "9-12"
+        };
+
         text = "Frame windows";
+
         for (size_t i = 0; i < names.size(); i++) {
             text += fmt::format("\n{}: {}", names[i], tally[i]);
         }
     }
+
     label->setString(text.c_str());
     label->setVisible(!text.empty());
 }
@@ -426,19 +481,24 @@ inline void updateLabel(PlayLayer* pl) {
 // ---------- hooks ----------
 
 class $modify(BotGameLayer, GJBaseGameLayer) {
-    // runs once per physics tick; every call counts as one step
     void processCommands(float dt, bool isHalfTick, bool isLastTick) {
         auto pl = PlayLayer::get();
+
         bool mine = pl && bot::mode != bot::Mode::Off &&
-            static_cast<GJBaseGameLayer*>(pl) == static_cast<GJBaseGameLayer*>(this);
+            static_cast<GJBaseGameLayer*>(pl) ==
+            static_cast<GJBaseGameLayer*>(this);
+
         if (!mine) {
             GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
             return;
         }
-        // a failed try is frozen until the search restores a checkpoint
+
         if (bot::mode == bot::Mode::Search && bot::failed) return;
+
         bot::onStep(this);
+
         GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+
         bot::curStep++;
     }
 };
@@ -451,61 +511,87 @@ class $modify(BotPlayLayer, PlayLayer) {
 
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
+
         bool safe = Mod::get()->getSettingValue<bool>("safe-mode");
-        bool nearEnd = bot::mode != bot::Mode::Off && !bot::blockComplete && safe &&
+
+        bool nearEnd =
+            bot::mode != bot::Mode::Off &&
+            !bot::blockComplete &&
+            safe &&
             !(bot::mode == bot::Mode::Search && bot::failed) &&
             this->getCurrentPercent() >= 98.f;
+
         if (nearEnd) {
-            // safe mode: stop the bot before it can reach the end of the level
             if (bot::mode == bot::Mode::Search) {
                 bot::finishSearch();
             } else {
                 bot::stopAll();
-                bot::notify("Safe mode: stopped before the end of the level", NotificationIcon::Info);
+                bot::notify(
+                    "Safe mode: stopped before the end of the level",
+                    NotificationIcon::Info
+                );
             }
+
             this->botSafeEnd();
         } else if (bot::mode == bot::Mode::Search) {
             bot::searchTick(this);
         }
+
         bot::updateLabel(this);
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* object) {
-        if (bot::mode == bot::Mode::Search && !bot::stack.empty()) {
-            // don't actually die while searching, just mark this try as failed
+        if (
+            bot::mode == bot::Mode::Search &&
+            !bot::stack.empty()
+        ) {
             bot::failed = true;
             return;
         }
+
         PlayLayer::destroyPlayer(player, object);
     }
 
     void levelComplete() {
         if (bot::blockComplete) return;
+
         bool safe = Mod::get()->getSettingValue<bool>("safe-mode");
+
         if (bot::mode == bot::Mode::Search) {
-            // a try that already hit something doesn't count as finishing
             if (bot::failed) return;
+
             bot::finishSearch();
+
             if (safe) {
                 this->botSafeEnd();
                 return;
             }
         } else if (bot::mode == bot::Mode::Play && safe) {
             bot::stopAll();
-            bot::notify("Safe mode: level completion blocked", NotificationIcon::Info);
+
+            bot::notify(
+                "Safe mode: level completion blocked",
+                NotificationIcon::Info
+            );
+
             this->botSafeEnd();
             return;
         }
+
         PlayLayer::levelComplete();
     }
 
-    // safe mode: don't let the level complete, restart it instead
     void botSafeEnd() {
         if (bot::blockComplete) return;
+
         bot::blockComplete = true;
+
         this->runAction(CCSequence::create(
             CCDelayTime::create(0.3f),
-            CCCallFunc::create(this, callfunc_selector(BotPlayLayer::botSafeReset)),
+            CCCallFunc::create(
+                this,
+                callfunc_selector(BotPlayLayer::botSafeReset)
+            ),
             nullptr
         ));
     }
@@ -516,9 +602,11 @@ class $modify(BotPlayLayer, PlayLayer) {
 
     void onQuit() {
         bot::blockComplete = false;
+
         if (bot::mode != bot::Mode::Off) {
             bot::stopAll();
         }
+
         PlayLayer::onQuit();
     }
 };
@@ -528,22 +616,43 @@ class $modify(BotPauseLayer, PauseLayer) {
         PauseLayer::customSetup();
 
         auto win = CCDirector::sharedDirector()->getWinSize();
+
         auto menu = CCMenu::create();
         menu->setID("pathfinder-menu"_spr);
         menu->setPosition({0.f, 0.f});
 
-        auto searchSpr = ButtonSprite::create(bot::mode == bot::Mode::Search ? "Stop" : "Search");
-        auto searchBtn = CCMenuItemSpriteExtra::create(
-            searchSpr, this, menu_selector(BotPauseLayer::onBotSearch)
+        auto searchSpr = ButtonSprite::create(
+            bot::mode == bot::Mode::Search ? "Stop" : "Search"
         );
-        searchBtn->setPosition({win.width / 2.f - 70.f, win.height - 28.f});
+
+        auto searchBtn = CCMenuItemSpriteExtra::create(
+            searchSpr,
+            this,
+            menu_selector(BotPauseLayer::onBotSearch)
+        );
+
+        searchBtn->setPosition({
+            win.width / 2.f - 70.f,
+            win.height - 28.f
+        });
+
         menu->addChild(searchBtn);
 
-        auto playSpr = ButtonSprite::create(bot::mode == bot::Mode::Play ? "Stop" : "Play");
-        auto playBtn = CCMenuItemSpriteExtra::create(
-            playSpr, this, menu_selector(BotPauseLayer::onBotPlay)
+        auto playSpr = ButtonSprite::create(
+            bot::mode == bot::Mode::Play ? "Stop" : "Play"
         );
-        playBtn->setPosition({win.width / 2.f + 70.f, win.height - 28.f});
+
+        auto playBtn = CCMenuItemSpriteExtra::create(
+            playSpr,
+            this,
+            menu_selector(BotPauseLayer::onBotPlay)
+        );
+
+        playBtn->setPosition({
+            win.width / 2.f + 70.f,
+            win.height - 28.f
+        });
+
         menu->addChild(playBtn);
 
         this->addChild(menu, 100);
@@ -556,6 +665,7 @@ class $modify(BotPauseLayer, PauseLayer) {
             this->onResume(nullptr);
             return;
         }
+
         bot::startSearch();
         bot::notify("Searching...", NotificationIcon::Info);
         this->onRestart(nullptr);
@@ -568,10 +678,15 @@ class $modify(BotPauseLayer, PauseLayer) {
             this->onResume(nullptr);
             return;
         }
+
         if (!bot::startPlay()) {
-            bot::notify("No saved path yet. Run Search first.", NotificationIcon::Warning);
+            bot::notify(
+                "No saved path yet. Run Search first.",
+                NotificationIcon::Warning
+            );
             return;
         }
+
         bot::notify("Playing path", NotificationIcon::Info);
         this->onRestart(nullptr);
     }
